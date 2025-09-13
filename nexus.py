@@ -496,3 +496,4 @@ with tabs[3]:
                         unsafe_allow_html=True)
         else:
             st.info("Henüz skor girilmedi veya fikstür oluşturulmadı.")
+
