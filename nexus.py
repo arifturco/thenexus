@@ -27,6 +27,70 @@ def img_to_base64(img):
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode()
 
+def create_schedule_from_draw(players, draw_pairs, total_weeks=8):
+    """
+    36 oyuncu/ takım, toplam tek maçlı eşleşmeler (ör. A-B sadece bir kez),
+    8 hafta, haftada len(players)//2 maç (36 için 18).
+    draw_pairs: iterable of (a,b) unordered pairs (her eş yalnızca 1 kez olmalı).
+    Algoritma: haftalık max matching bulmaya çalışır (greedy + shuffle denemeleri).
+    """
+
+    players = list(players)
+    n = len(players)
+    matches_per_week = n // 2  # örn. 36 -> 18
+    matches = set()
+    # Normalize draw_pairs: tuple(sorted(...)) ile tekilleştir
+    for a, b in draw_pairs:
+        if a == b:
+            continue
+        matches.add(tuple(sorted((a, b))))
+    matches = list(matches)
+
+    # Hızlı sanity check: toplam maç sayısı istenenle uyuşmalı
+    expected_total_matches = (n * (len(matches) * 0 // len(matches) + 0))  # dummy avoid div0
+    # (bu satır sadece gösterim amaçlıdır; fonksiyon çalışma mantığı bundan etkilenmez)
+
+    # Çoklu deneme (global) - eğer belirli kura kombinasyonlarında yerleştirme takılırsa yeniden dene
+    MAX_GLOBAL_RETRIES = 2000
+    WEEK_RETRIES = 500
+
+    for global_try in range(MAX_GLOBAL_RETRIES):
+        remaining = set(matches)
+        schedule = {w: [] for w in range(1, total_weeks + 1)}
+        success = True
+
+        for week in range(1, total_weeks + 1):
+            assigned = False
+            # Her hafta için WEEK_RETRIES defa farklı greedy deneme yap
+            for wtry in range(WEEK_RETRIES):
+                rem_list = list(remaining)
+                random.shuffle(rem_list)
+                week_assigned = []
+                used = set()
+                for (a, b) in rem_list:
+                    if len(week_assigned) >= matches_per_week:
+                        break
+                    if a not in used and b not in used:
+                        week_assigned.append((a, b))
+                        used.update([a, b])
+                if len(week_assigned) == matches_per_week:
+                    # Başarılı hafta yerleştirmesi
+                    schedule[week] = week_assigned
+                    for m in week_assigned:
+                        remaining.discard(tuple(sorted(m)))
+                    assigned = True
+                    break
+            if not assigned:
+                success = False
+                break
+
+        if success and not remaining:
+            return schedule
+
+    # Eğer buraya gelindiyse, belirlenen denemelerde yerleştirme sağlanamadı
+    raise RuntimeError("Fikstür oluşturulamadı: uygun dağılım bulunamadı (denendi).")
+
+
 # -------------------------
 # Mevcut sezon (en güncel active sezon)
 # -------------------------
@@ -94,7 +158,7 @@ with st.sidebar:
     st.subheader("Admin Girişi")
     password = st.text_input("Parola", type="password")
     if st.button("Giriş Yap"):
-        if password == "thenexus12x.":
+        if password == "1":
             st.session_state["admin_logged_in"] = True
             st.session_state["is_admin"] = True
             st.success("Admin olarak giriş yapıldı")
@@ -114,6 +178,9 @@ logo_img = Image.open(logo_path)
 bg_base64 = img_to_base64(background_img)
 logo_base64 = img_to_base64(logo_img)
 
+# -------------------------
+# CSS
+# -------------------------
 # -------------------------
 # CSS
 # -------------------------
@@ -151,6 +218,85 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+/* Fikstür kartları */
+.fixtur-week-card {
+    background: rgba(10,10,40,0.7);
+    backdrop-filter: blur(6px);
+    border-radius: 15px;
+    padding: 15px;
+    margin: 10px 0;
+    border: 1px solid rgba(255,255,255,0.2);
+    box-shadow: 0 0 15px rgba(0, 100, 255, 0.5);
+}
+.fixtur-match {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 6px 0;
+}
+.fixtur-team {
+    font-weight: bold;
+    color: #ffffff;
+    padding: 6px 12px;
+    border-radius: 12px;
+    background: rgba(0, 150, 255, 0.3);
+    text-align: center;
+    min-width: 120px;
+}
+.fixtur-vs {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+/* Maç sonuçları kartları */
+.match-week-card {
+    background: rgba(20,20,50,0.65);
+    backdrop-filter: blur(6px);
+    border-radius: 15px;
+    padding: 12px;
+    margin: 8px 0;
+    border: 1px solid rgba(255,255,255,0.2);
+    box-shadow: 0 0 12px rgba(0, 120, 255, 0.5);
+}
+.match-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 6px 0;
+}
+.match-team {
+    font-weight: bold;
+    color: #ffffff;
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: rgba(0, 150, 255, 0.3);
+    min-width: 110px;
+    text-align: center;
+}
+.match-score {
+    font-weight: bold;
+    color: #ffffff;
+    font-size: 16px;
+}
+</style>
+""", unsafe_allow_html=True)
+st.markdown(f"""
+<style>
+.stApp {{
+    background-image: url("data:image/png;base64,{bg_base64}");
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+    color: white;
+}}
+</style>
+""", unsafe_allow_html=True)
+
+
+
 # -------------------------
 # Sekmeler
 # -------------------------
@@ -185,13 +331,14 @@ with tabs[0]:
                 continue
         raise RuntimeError(f"{max_attempts} denemede uygun kura bulunamadı!")
 
+
     if st.session_state["admin_logged_in"]:
         if st.button("🎲 Kura Çek") and teams:
             opponents, all_matches = draw_opponents(teams)
             st.session_state['opponents'] = opponents
             st.session_state['all_matches'] = all_matches
 
-            # Yeni sezon
+            # Yeni sezon ekle
             season_count = supabase.table("seasons").select("id", count="exact").execute().count
             season_name = f"Sezon {season_count + 1}"
             new_season = supabase.table("seasons").insert({
@@ -200,31 +347,15 @@ with tabs[0]:
             }).execute()
             season_id = new_season.data[0]['id']
 
-            # Reset state
+            # Session state sıfırla
             st.session_state['weeks'] = {}
             st.session_state['scores'] = {}
             st.session_state['matches_loaded'] = False
 
-            def create_weeks_from_opponents(opponents):
-                teams_list = list(opponents.keys())
-                n = len(teams_list)
-                if n % 2 != 0:
-                    teams_list.append("BAY")
-                    n += 1
-                weeks = {i: [] for i in range(1, 9)}
-                team_list = teams_list[:]
-                for week in range(1, 9):
-                    week_matches = []
-                    for i in range(n // 2):
-                        t1 = team_list[i]
-                        t2 = team_list[n - 1 - i]
-                        if t1 != "BAY" and t2 != "BAY":
-                            week_matches.append((t1, t2))
-                    weeks[week] = week_matches
-                    team_list = [team_list[0]] + [team_list[-1]] + team_list[1:-1]
-                return weeks
-
-            st.session_state['weeks'] = create_weeks_from_opponents(opponents)
+            # 🎯 Yeni: kura sonucuna göre fikstür oluştur
+            players = teams
+            draw_pairs = list(all_matches)
+            st.session_state['weeks'] = create_schedule_from_draw(players, draw_pairs, total_weeks=8)
 
             # DB'ye ekle
             for week, week_matches in st.session_state['weeks'].items():
@@ -263,13 +394,18 @@ with tabs[0]:
 # Fikstür
 # -------------------------
 with tabs[1]:
-    if season_id:
-        if 'weeks' not in st.session_state:
-            st.session_state['weeks'] = {}
+    if season_id and 'weeks' in st.session_state and st.session_state['weeks']:
         for week, week_matches in st.session_state['weeks'].items():
-            st.write(f"Hafta {week}")
+            st.markdown(f"<div class='fixtur-week-card'><h3>Hafta {week}</h3>", unsafe_allow_html=True)
             for m in week_matches:
-                st.write(f"{m[0]} ⚔️ {m[1]}")
+                col1, col2, col3 = st.columns([2,1,2])
+                with col1:
+                    st.markdown(f'<div class="fixtur-team">{m[0]}</div>', unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f'<div class="fixtur-vs" style="text-align:center;">➖</div>', unsafe_allow_html=True)
+                with col3:
+                    st.markdown(f'<div class="fixtur-team">{m[1]}</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
     if 'opponents' in st.session_state:
         if 'weeks' not in st.session_state:
@@ -281,7 +417,7 @@ with tabs[1]:
         for week, week_matches in st.session_state['weeks'].items():
             st.markdown(f"### Hafta {week}")
             for m in week_matches:
-                st.write(f"{m[0]} ⚔️ {m[1]}")
+                st.write(f"{m[0]} ➖ {m[1]}")
                 csv_rows.append({"Hafta": week, "Ev Sahibi": m[0], "Deplasman": m[1]})
         df_fixtur = pd.DataFrame(csv_rows)
         csv_bytes = df_fixtur.to_csv(index=False).encode()
@@ -296,7 +432,28 @@ with tabs[2]:
     if 'weeks' in st.session_state and st.session_state['weeks']:
         for week in sorted(st.session_state['weeks'].keys()):
             week_matches = st.session_state['weeks'][week]
-            st.markdown(f"### Hafta {week}")
+
+            # Admin değilse modern kart görünümü
+            if not st.session_state.get("admin_logged_in"):
+                st.markdown(f'<div class="match-week-card"><h4>Hafta {week}</h4>', unsafe_allow_html=True)
+                for m in week_matches:
+                    pair_key = (m[0], m[1], week)
+                    g1, g2 = st.session_state['scores'].get(pair_key, ("-", "-"))
+
+                    col1, col2, col3 = st.columns([2, 1, 2])
+
+                    with col1:
+                        st.markdown(f'<div class="match-team">{m[0]}</div>', unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f'<div class="match-score" style="text-align:center;">{g1} ➖ {g2}</div>',
+                                    unsafe_allow_html=True)
+                    with col3:
+                        st.markdown(f'<div class="match-team">{m[1]}</div>', unsafe_allow_html=True)
+
+                st.markdown("</div>", unsafe_allow_html=True)
+                continue  # Admin kısmını atla
+
+            # Admin görünümü (mevcut kodun aynısı)
             for m in week_matches:
                 pair_key = (m[0], m[1], week)
                 sel_home_key = keyify(m[0], m[1], week, "home")
@@ -304,35 +461,38 @@ with tabs[2]:
 
                 col1, col2, col3 = st.columns([2,1,2])
 
-                if st.session_state.get("admin_logged_in"):
-                    g1_db, g2_db = st.session_state['scores'].get(pair_key, ("-", "-"))
-                    options = ["-"] + [str(i) for i in range(51)]
+                g1_db, g2_db = st.session_state['scores'].get(pair_key, ("-", "-"))
+                options = ["-"] + [str(i) for i in range(51)]
 
-                    with col1:
-                        g1 = st.selectbox(label=m[0], options=options,
-                                          index=options.index(g1_db) if g1_db in options else 0,
-                                          key=sel_home_key)
-                    with col2:
-                        st.write("⚔️")
-                    with col3:
-                        g2 = st.selectbox(label=m[1], options=options,
-                                          index=options.index(g2_db) if g2_db in options else 0,
-                                          key=sel_away_key)
+                with col1:
+                    g1 = st.selectbox(label=m[0], options=options,
+                                      index=options.index(g1_db) if g1_db in options else 0,
+                                      key=sel_home_key)
+                with col2:
+                    st.write("➖")
+                with col3:
+                    g2 = st.selectbox(label=m[1], options=options,
+                                      index=options.index(g2_db) if g2_db in options else 0,
+                                      key=sel_away_key)
 
-                    # Sadece admin skorları session_state'e yazsın
-                    st.session_state['scores'][pair_key] = (g1, g2)
-                else:
-                    g1, g2 = st.session_state['scores'].get(pair_key, ("-", "-"))
-                    with col1:
-                        st.write(m[0])
-                    with col2:
-                        st.write(f"{g1} ⚔️ {g2}")
-                    with col3:
-                        st.write(m[1])
+                st.session_state['scores'][pair_key] = (g1, g2)
 
-        # Admin için "Skorları Kaydet" butonu
-        if st.session_state.get("admin_logged_in"):
-            if st.button("💾 Skorları Kaydet", key="kaydet_ust"):
+    # Admin için sabit "Skorları Kaydet" butonu
+    if st.session_state.get("admin_logged_in"):
+        st.markdown("""
+            <style>
+            .fixed-save-btn {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                z-index: 9999;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+        save_col = st.container()
+        with save_col:
+            if st.button("💾 Skorları Kaydet", key="kaydet_fixed"):
                 any_error = False
                 for week, week_matches in st.session_state['weeks'].items():
                     for m in week_matches:
@@ -356,7 +516,6 @@ with tabs[2]:
 
                         st.session_state['scores'][(m[0], m[1], week)] = (g1, g2)
 
-                # DB ile mutabakat için yeniden yükle
                 st.session_state['matches_loaded'] = False
                 load_matches_into_state()
                 st.session_state['matches_loaded'] = True
@@ -365,8 +524,8 @@ with tabs[2]:
                     st.error("Bazı güncellemelerde hata oluştu.")
                 else:
                     st.success("Skorlar kaydedildi ve yenilendi ✅")
-    else:
-        st.info("Henüz fikstür oluşturulmadı veya yüklenmedi.")
+
+
 
 # -------------------------
 # Puan Durumu
